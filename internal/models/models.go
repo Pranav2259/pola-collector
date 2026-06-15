@@ -16,13 +16,17 @@ type Session struct {
 
 // ─── TED ────────────────────────────────────────────────────────────────────
 
-type TEDOutput struct {
-	Command string    `json:"command"`
-	Output  TEDNodes  `json:"output"`
+// TEDDirect is what the real `pola ted -j` binary emits: {"ted":[...]}
+type TEDDirect struct {
+	Nodes []TEDNode `json:"ted"`
 }
 
-type TEDNodes struct {
-	Nodes []TEDNode `json:"ted"`
+// TEDOutput is the wrapped format from the sample JSON files:
+// {"command":"...","output":{"ted":[...]}}
+// Kept for test/replay compatibility.
+type TEDOutput struct {
+	Command string    `json:"command"`
+	Output  TEDDirect `json:"output"`
 }
 
 type TEDNode struct {

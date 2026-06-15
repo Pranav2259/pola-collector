@@ -162,4 +162,3 @@ ORDER BY l.collected_at;
 **Recommendation:** Start with Postgres. If you find yourself writing many
 recursive CTEs for path computation against the TED, add Neo4j (or pgRouting)
 alongside. Session data stays in Postgres forever.
-# pola-collector
