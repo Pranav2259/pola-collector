@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB:       pola
+      POSTGRES_USER:     pola
+      POSTGRES_PASSWORD: pola
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pola"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  collector:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # ── pola ────────────────────────────────────────────────
+      POLA_BINARY:       ./pola
+      POLA_PORT:         "50052"
+      POLA_HOST:         ""           # empty = localhost / default
+
+      # ── postgres ─────────────────────────────────────────────
+      POSTGRES_DSN:      "host=postgres port=5432 user=pola password=pola dbname=pola sslmode=disable"
+
+      # ── timing ──────────────────────────────────────────────
+      COLLECT_INTERVAL:  "1m"         # Go duration string: 30s, 5m, 1h …
+      DB_CONN_RETRIES:   "5"
+      DB_CONN_DELAY:     "3s"
+
+volumes:
+  pgdata:
