@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -309,7 +308,7 @@ func upsertPrefixes(tx *sql.Tx, nodes []models.TEDNode, nodeIDBySystemID map[str
 			continue
 		}
 		for _, p := range n.Prefixes {
-			isLoopback := strings.HasSuffix(p.Prefix, "/32")
+			// isLoopback := strings.HasSuffix(p.Prefix, "/32")
 			var id int64
 			err := tx.QueryRow(
 				`SELECT id FROM prefix WHERE node_id = $1 AND prefix = $2::cidr`,
@@ -319,9 +318,8 @@ func upsertPrefixes(tx *sql.Tx, nodes []models.TEDNode, nodeIDBySystemID map[str
 			if err == sql.ErrNoRows {
 				_, err = tx.Exec(`
 					INSERT INTO prefix (node_id, prefix, sid_index, is_loopback)
-					VALUES ($1, $2::cidr, $3, $4)`,
-					nodeID, p.Prefix, p.SIDIndex, isLoopback,
-				)
+					VALUES ($1, $2::cidr, $3)`,
+					nodeID, p.Prefix, p.SIDIndex)
 				if err != nil {
 					return fmt.Errorf("insert prefix %s on %s: %w", p.Prefix, n.Hostname, err)
 				}
@@ -330,11 +328,11 @@ func upsertPrefixes(tx *sql.Tx, nodes []models.TEDNode, nodeIDBySystemID map[str
 			} else {
 				_, err = tx.Exec(`
 					UPDATE prefix SET
-					  sid_index    = $1,
-					  is_loopback  = $2,
-					  last_seen_at = NOW()
-					WHERE id = $3`,
-					p.SIDIndex, isLoopback, id,
+					sid_index    = $1,
+					last_seen_at = NOW()
+					WHERE id = $2`,
+					p.SIDIndex,
+					id,
 				)
 				if err != nil {
 					return fmt.Errorf("update prefix %s on %s: %w", p.Prefix, n.Hostname, err)
