@@ -105,26 +105,46 @@ func collectionLoop(ctx context.Context, cfg config, database *db.DB) {
 }
 
 func collect(cfg collector.Config, database *db.DB) {
-	// ── sessions ─────────────────────────────────────────────────────────
+	// ── 1. TED first — we need nodes before we can resolve session→node FKs
+	nodes, cmd, err := collector.CollectTED(cfg)
+	if err != nil {
+		log.Printf("[collect] TED command %q failed: %v", cmd, err)
+		return
+	}
+	log.Printf("[collect] got %d TED nodes from: %s", len(nodes), cmd)
+
+	if len(nodes) == 0 {
+		log.Printf("[collect] TED returned 0 nodes — skipping this cycle")
+		return
+	}
+
+	// ── 2. Ensure the network row exists and get its id
+	networkID, err := database.EnsureNetwork(nodes)
+	if err != nil {
+		log.Printf("[collect] ensure network failed: %v", err)
+		return
+	}
+
+	// ── 3. Upsert nodes / links / prefixes
+	if err := database.UpsertTED(networkID, nodes); err != nil {
+		log.Printf("[collect] upsert TED failed: %v", err)
+		return
+	}
+
+	// ── 4. Sessions — now node rows exist so oob_addr → node_id join works
 	sessions, cmd, err := collector.CollectSessions(cfg)
 	if err != nil {
 		log.Printf("[collect] session command %q failed: %v", cmd, err)
 	} else {
 		log.Printf("[collect] got %d sessions from: %s", len(sessions), cmd)
-		if err := database.InsertSessions(sessions); err != nil {
-			log.Printf("[collect] insert sessions failed: %v", err)
+		if err := database.UpsertSessions(networkID, sessions); err != nil {
+			log.Printf("[collect] upsert sessions failed: %v", err)
 		}
 	}
 
-	// ── TED ──────────────────────────────────────────────────────────────
-	nodes, cmd, err := collector.CollectTED(cfg)
-	if err != nil {
-		log.Printf("[collect] TED command %q failed: %v", cmd, err)
-	} else {
-		log.Printf("[collect] got %d TED nodes from: %s", len(nodes), cmd)
-		if err := database.InsertTEDNodes(nodes); err != nil {
-			log.Printf("[collect] insert TED failed: %v", err)
-		}
+	// ── 5. Snapshot — point-in-time record of this cycle
+	if err := database.RecordSnapshot(networkID); err != nil {
+		log.Printf("[collect] record snapshot failed: %v", err)
 	}
 }
 
