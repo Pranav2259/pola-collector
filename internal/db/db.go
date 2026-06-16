@@ -307,39 +307,61 @@ func upsertPrefixes(tx *sql.Tx, nodes []models.TEDNode, nodeIDBySystemID map[str
 		if !ok {
 			continue
 		}
+
 		for _, p := range n.Prefixes {
-			// isLoopback := strings.HasSuffix(p.Prefix, "/32")
 			var id int64
-			err := tx.QueryRow(
-				`SELECT id FROM prefix WHERE node_id = $1 AND prefix = $2::cidr`,
+
+			err := tx.QueryRow(`
+				SELECT id
+				FROM prefix
+				WHERE node_id = $1
+				  AND prefix = $2::cidr`,
 				nodeID, p.Prefix,
 			).Scan(&id)
 
 			if err == sql.ErrNoRows {
 				_, err = tx.Exec(`
-					INSERT INTO prefix (node_id, prefix, sid_index, is_loopback)
-					VALUES ($1, $2::cidr, $3)`,
-					nodeID, p.Prefix, p.SIDIndex)
+					INSERT INTO prefix (
+						node_id,
+						prefix,
+						sid_index
+					)
+					VALUES (
+						$1,
+						$2::cidr,
+						$3
+					)`,
+					nodeID,
+					p.Prefix,
+					p.SIDIndex,
+				)
 				if err != nil {
-					return fmt.Errorf("insert prefix %s on %s: %w", p.Prefix, n.Hostname, err)
+					return fmt.Errorf("insert prefix %s on %s: %w",
+						p.Prefix, n.Hostname, err)
 				}
+
 			} else if err != nil {
-				return fmt.Errorf("query prefix %s on %s: %w", p.Prefix, n.Hostname, err)
+				return fmt.Errorf("query prefix %s on %s: %w",
+					p.Prefix, n.Hostname, err)
+
 			} else {
 				_, err = tx.Exec(`
-					UPDATE prefix SET
-					sid_index    = $1,
-					last_seen_at = NOW()
+					UPDATE prefix
+					SET
+						sid_index    = $1,
+						last_seen_at = NOW()
 					WHERE id = $2`,
 					p.SIDIndex,
 					id,
 				)
 				if err != nil {
-					return fmt.Errorf("update prefix %s on %s: %w", p.Prefix, n.Hostname, err)
+					return fmt.Errorf("update prefix %s on %s: %w",
+						p.Prefix, n.Hostname, err)
 				}
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -373,61 +395,94 @@ func (d *DB) UpsertSessions(networkID int64, sessions []models.Session) error {
 			return fmt.Errorf("marshal caps for %s: %w", s.Addr, merr)
 		}
 
-		capSet := toSet(s.Caps)
-		stateful := capSet["Stateful"]
-		instantiation := capSet["Instantiation"]
-		srTE := capSet["SR-TE"]
-		srv6TE := capSet["SRv6-TE"]
-
 		var nodeID sql.NullInt64
 		if id, ok := nodeByOOB[s.Addr]; ok {
-			nodeID = sql.NullInt64{Int64: id, Valid: true}
+			nodeID = sql.NullInt64{
+				Int64: id,
+				Valid: true,
+			}
 		}
 
-		// Check if session already exists
 		var id int64
 		err = tx.QueryRow(
-			`SELECT id FROM session WHERE network_id = $1 AND pcc_addr = $2::inet`,
-			networkID, s.Addr,
+			`SELECT id
+		   FROM session
+		  WHERE network_id = $1
+		    AND pcc_addr = $2::inet`,
+			networkID,
+			s.Addr,
 		).Scan(&id)
 
 		if err == sql.ErrNoRows {
+
 			_, err = tx.Exec(`
-				INSERT INTO session
-				  (network_id, pcc_addr, node_id, state, synced,
-				   caps, stateful, instantiation, sr_te, srv6_te)
-				VALUES ($1, $2::inet, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)`,
-				networkID, s.Addr, nodeID, s.State, s.IsSynced,
-				string(capsJSON), stateful, instantiation, srTE, srv6TE,
+			INSERT INTO session
+			  (network_id,
+			   pcc_addr,
+			   node_id,
+			   state,
+			   synced,
+			   caps)
+			VALUES
+			  ($1,
+			   $2::inet,
+			   $3,
+			   $4,
+			   $5,
+			   $6::jsonb)`,
+				networkID,
+				s.Addr,
+				nodeID,
+				s.State,
+				s.IsSynced,
+				string(capsJSON),
 			)
 			if err != nil {
 				return fmt.Errorf("insert session %s: %w", s.Addr, err)
 			}
-			log.Printf("[db]   session INSERT %-16s  state=%s  node_id=%v", s.Addr, s.State, nodeID)
+
+			log.Printf(
+				"[db]   session INSERT %-16s state=%s node_id=%v",
+				s.Addr,
+				s.State,
+				nodeID,
+			)
+
 		} else if err != nil {
+
 			return fmt.Errorf("query session %s: %w", s.Addr, err)
+
 		} else {
+
 			_, err = tx.Exec(`
-				UPDATE session SET
-				  node_id       = $1,
-				  synced        = $2,
-				  caps          = $3::jsonb,
-				  stateful      = $4,
-				  instantiation = $5,
-				  sr_te         = $6,
-				  srv6_te       = $7,
-				  last_change_at = CASE WHEN state != $8 THEN NOW() ELSE last_change_at END,
-				  state         = $8,
-				  last_seen_at  = NOW()
-				WHERE id = $9`,
-				nodeID, s.IsSynced, string(capsJSON),
-				stateful, instantiation, srTE, srv6TE,
-				s.State, id,
+			UPDATE session SET
+			  node_id        = $1,
+			  synced         = $2,
+			  caps           = $3::jsonb,
+			  last_change_at = CASE
+			                     WHEN state <> $4
+			                     THEN NOW()
+			                     ELSE last_change_at
+			                   END,
+			  state          = $4,
+			  last_seen_at   = NOW()
+			WHERE id = $5`,
+				nodeID,
+				s.IsSynced,
+				string(capsJSON),
+				s.State,
+				id,
 			)
 			if err != nil {
 				return fmt.Errorf("update session %s: %w", s.Addr, err)
 			}
-			log.Printf("[db]   session UPDATE %-16s  state=%s  node_id=%v", s.Addr, s.State, nodeID)
+
+			log.Printf(
+				"[db]   session UPDATE %-16s state=%s node_id=%v",
+				s.Addr,
+				s.State,
+				nodeID,
+			)
 		}
 	}
 
