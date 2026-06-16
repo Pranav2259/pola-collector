@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -115,9 +116,10 @@ var pollIntervalS = 60
 // UpsertTED upserts the full TED snapshot into node / link / prefix atomically.
 // Upsert strategy (SELECT-then-INSERT/UPDATE) avoids relying on unique
 // constraints that may not exist — we key on:
-//   node   → (network_id, system_id)
-//   link   → (network_id, local_ip, remote_ip)
-//   prefix → (node_id, prefix)
+//
+//	node   → (network_id, system_id)
+//	link   → (network_id, local_ip, remote_ip)
+//	prefix → (node_id, prefix)
 func (d *DB) UpsertTED(networkID int64, nodes []models.TEDNode) error {
 	if len(nodes) == 0 {
 		return nil
@@ -160,11 +162,11 @@ func upsertNodes(tx *sql.Tx, networkID int64, nodes []models.TEDNode) (map[strin
 			log.Printf("[db] node %s has no loopback prefix — skipping", n.Hostname)
 			continue
 		}
-		var nodeSID *int
-		if sidIndex != nil {
-			v := n.SRGBBegin + *sidIndex
-			nodeSID = &v
-		}
+		// var nodeSID *int
+		// if sidIndex != nil {
+		// 	v := n.SRGBBegin + *sidIndex
+		// 	nodeSID = &v
+		// }
 
 		// Check if node already exists
 		var id int64
@@ -177,40 +179,50 @@ func upsertNodes(tx *sql.Tx, networkID int64, nodes []models.TEDNode) (map[strin
 			// Insert new node
 			err = tx.QueryRow(`
 				INSERT INTO node
-				  (network_id, system_id, hostname, router_id,
-				   srgb_begin, srgb_end, node_sid, sid_index,
-				   isis_area, status, sr_algorithms)
+				(network_id, system_id, hostname, router_id,
+				srgb_begin, srgb_end, sid_index,
+				isis_area, status, sr_algorithms)
 				VALUES
-				  ($1, $2, $3, $4::inet,
-				   $5, $6, $7, $8,
-				   $9, 'up', '{0}')
+				($1, $2, $3, $4::inet,
+				$5, $6, $7,
+				$8, 'up', '{0}')
 				RETURNING id`,
-				networkID, n.RouterID, n.Hostname, routerIP,
-				n.SRGBBegin, n.SRGBEnd, nodeSID, sidIndex, n.ISISAreaID,
+				networkID,
+				n.RouterID,
+				n.Hostname,
+				routerIP,
+				n.SRGBBegin,
+				n.SRGBEnd,
+				sidIndex,
+				n.ISISAreaID,
 			).Scan(&id)
 			if err != nil {
 				return nil, fmt.Errorf("insert node %s: %w", n.Hostname, err)
 			}
-			log.Printf("[db]   node INSERT %-10s  system_id=%s  router_id=%-12s  node_sid=%v  id=%d",
-				n.Hostname, n.RouterID, routerIP, nodeSID, id)
+			log.Printf("[db]   node INSERT %-10s  system_id=%s  router_id=%-12s   id=%d",
+				n.Hostname, n.RouterID, routerIP, id)
 		} else if err != nil {
 			return nil, fmt.Errorf("query node %s: %w", n.Hostname, err)
 		} else {
 			// Update existing node
 			_, err = tx.Exec(`
 				UPDATE node SET
-				  hostname     = $1,
-				  router_id    = $2::inet,
-				  srgb_begin   = $3,
-				  srgb_end     = $4,
-				  node_sid     = $5,
-				  sid_index    = $6,
-				  isis_area    = $7,
-				  status       = 'up',
-				  last_seen_at = NOW()
-				WHERE id = $8`,
-				n.Hostname, routerIP, n.SRGBBegin, n.SRGBEnd,
-				nodeSID, sidIndex, n.ISISAreaID, id,
+				hostname     = $1,
+				router_id    = $2::inet,
+				srgb_begin   = $3,
+				srgb_end     = $4,
+				sid_index    = $5,
+				isis_area    = $6,
+				status       = 'up',
+				last_seen_at = NOW()
+				WHERE id = $7`,
+				n.Hostname,
+				routerIP,
+				n.SRGBBegin,
+				n.SRGBEnd,
+				sidIndex,
+				n.ISISAreaID,
+				id,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("update node %s: %w", n.Hostname, err)
@@ -297,8 +309,7 @@ func upsertPrefixes(tx *sql.Tx, nodes []models.TEDNode, nodeIDBySystemID map[str
 			continue
 		}
 		for _, p := range n.Prefixes {
-			isLoopback := p.SIDIndex != nil
-
+			isLoopback := strings.HasSuffix(p.Prefix, "/32")
 			var id int64
 			err := tx.QueryRow(
 				`SELECT id FROM prefix WHERE node_id = $1 AND prefix = $2::cidr`,
@@ -364,11 +375,11 @@ func (d *DB) UpsertSessions(networkID int64, sessions []models.Session) error {
 			return fmt.Errorf("marshal caps for %s: %w", s.Addr, merr)
 		}
 
-		capSet        := toSet(s.Caps)
-		stateful      := capSet["Stateful"]
+		capSet := toSet(s.Caps)
+		stateful := capSet["Stateful"]
 		instantiation := capSet["Instantiation"]
-		srTE           := capSet["SR-TE"]
-		srv6TE         := capSet["SRv6-TE"]
+		srTE := capSet["SR-TE"]
+		srv6TE := capSet["SRv6-TE"]
 
 		var nodeID sql.NullInt64
 		if id, ok := nodeByOOB[s.Addr]; ok {
