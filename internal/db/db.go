@@ -390,6 +390,7 @@ func (d *DB) UpsertSessions(networkID int64, sessions []models.Session) error {
 	}
 
 	for _, s := range sessions {
+		s.State = normalizeSessionState(s.State)
 		capsJSON, merr := json.Marshal(s.Caps)
 		if merr != nil {
 			return fmt.Errorf("marshal caps for %s: %w", s.Addr, merr)
@@ -609,3 +610,16 @@ func toSet(ss []string) map[string]bool {
 
 // Ensure the import of "time" is used (it's used by SetConnMaxLifetime).
 var _ = time.Minute
+
+func normalizeSessionState(s string) string {
+	switch s {
+	case "SESSION_STATE_UP":
+		return "up"
+	case "SESSION_STATE_DOWN":
+		return "down"
+	case "SESSION_STATE_INIT":
+		return "init"
+	default:
+		return "init"
+	}
+}
